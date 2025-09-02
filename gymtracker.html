@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gym Tracker Cloud</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root { --bg:#0f172a; --card:#111827; --muted:#6b7280; --txt:#e5e7eb; --accent:#60a5fa; }
+body{margin:0; font-family:Inter,sans-serif; background:var(--bg); color:var(--txt);}
+h1{margin:16px;}
+button{padding:8px 12px; border-radius:10px; border:none; cursor:pointer;}
+.primary{background:var(--accent); color:#041424;}
+table{width:100%; border-collapse:collapse;}
+th,td{padding:10px; text-align:center; border-bottom:1px solid #1f2937;}
+td.clickable{cursor:pointer;}
+.modal{position:fixed; inset:0; display:none; place-items:center; background:rgba(0,0,0,.6);}
+.modal.show{display:grid;}
+.card{background:var(--card); padding:16px; border-radius:16px;}
+</style>
+</head>
+<body>
+<h1>Gym Tracker Cloud</h1>
+<button id="addBtn" class="primary">+ Adaugă</button>
+<span id="editBadge">Edit OFF</span>
+<table id="trackerTable">
+<thead>
+<tr><th>Data</th><th>Greutate</th><th>Brațe</th><th>Torace</th><th>ABS</th><th>Femur</th><th>Gambe</th></tr>
+</thead>
+<tbody></tbody>
+</table>
+<div class="modal" id="modal">
+<div class="card">
+<h3 id="modalTitle">Adaugă monitorizare</h3>
+<label>Data<input type="date" id="fDate" required></label>
+<label>Greutate<input type="number" id="fGreutate" step="0.1"></label>
+<label>Brațe<input type="number" id="fBrate" step="0.1"></label>
+<label>Torace<input type="number" id="fTorace" step="0.1"></label>
+<label>ABS<input type="number" id="fABS" step="0.1"></label>
+<label>Femur<input type="number" id="fFemur" step="0.1"></label>
+<label>Gambe<input type="number" id="fGambe" step="0.1"></label>
+<button id="cancelBtn">Renunță</button>
+<button id="saveBtn" class="primary">SAVE</button>
+</div>
+</div>
+<canvas id="progressChart" height="300"></canvas>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
+
+const firebaseConfig = { apiKey: "AIzaSyBYz0Phn_1FTRubKeZ9UdQ9BE67UJIXjAE", authDomain: "gym-tracker-17johnfr.firebaseapp.com", projectId: "gym-tracker-17johnfr", storageBucket: "gym-tracker-17johnfr.firebasestorage.app", messagingSenderId: "467985337300", appId: "1:467985337300:web:8fad170fabc59a93bc6441" };
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+let rows=[]; let currentMetric=null; let chartInstance=null; let editMode=false; let editingId=null;
+const tbody=document.querySelector('#trackerTable tbody');
+const addBtn=document.getElementById('addBtn');
+const editBadge=document.getElementById('editBadge');
+const modal=document.getElementById('modal');
+const fDate=document.getElementById('fDate');
+const fGreutate=document.getElementById('fGreutate');
+const fBrate=document.getElementById('fBrate');
+const fTorace=document.getElementById('fTorace');
+const fABS=document.getElementById('fABS');
+const fFemur=document.getElementById('fFemur');
+const fGambe=document.getElementById('fGambe');
+const saveBtn=document.getElementById('saveBtn');
+const cancelBtn=document.getElementById('cancelBtn');
+const ctx=document.getElementById('progressChart').getContext('2d');
+
+function cleanNumber(x){const v=parseFloat(String(x).replace(',','.')); return Number.isFinite(v)?v:null;}
+function fmtDateDisplay(iso){if(!iso)return''; const d=new Date(iso); return `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;}
+
+async function loadData(){
+  const q=query(collection(db,'gymData'),orderBy('Data'));
+  const snap=await getDocs(q);
+  rows=[];
+  snap.forEach(docu=>{rows.push({id:docu.id,...docu.data()});});
+  renderTable();
+  if(currentMetric) renderChart();
+}
+
+function renderTable(){
+  tbody.innerHTML='';
+  rows.forEach(row=>{
+    const tr=document.createElement('tr');
+    ['Data','Greutate','Brate','Torace','ABS','Femur','Gambe'].forEach(k=>{
+      const td=document.createElement('td');
+      td.textContent=row[k]??'';
+      if(k!=='Data'){ td.classList.add('clickable'); td.addEventListener('click',()=>{currentMetric=k; renderChart();}); }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+function openForm(mode,rowData){
+  modal.classList.add('show');
+  editingId=null;
+  if(mode==='edit'){ editingId=rowData.id; fDate.value=rowData.Data; fGreutate.value=rowData.Greutate??''; fBrate.value=rowData.Brate??''; fTorace.value=rowData.Torace??''; fABS.value=rowData.ABS??''; fFemur.value=rowData.Femur??''; fGambe.value=rowData.Gambe??''; }
+  else{fDate.value=''; fGreutate.value=''; fBrate.value=''; fTorace.value=''; fABS.value=''; fFemur.value=''; fGambe.value='';}
+}
+function closeForm(){modal.classList.remove('show');}
+addBtn.addEventListener('click',()=>openForm('add'));
+cancelBtn.addEventListener('click',closeForm);
+
+async function saveForm(){
+  if(!fDate.value){alert('Completează Data'); return;}
+  const payload={ Data:fDate.value, Greutate:cleanNumber(fGreutate.value), Brate:cleanNumber(fBrate.value), Torace:cleanNumber(fTorace.value), ABS:cleanNumber(fABS.value), Femur:cleanNumber(fFemur.value), Gambe:cleanNumber(fGambe.value) };
+  Object.keys(payload).forEach(k=>{if(payload[k]===null)delete payload[k];});
+  if(editingId){ await updateDoc(doc(db,'gymData',editingId),payload); }
+  else{ await addDoc(collection(db,'gymData'),payload); }
+  closeForm();
+  loadData();
+}
+saveBtn.addEventListener('click',saveForm);
+
+function renderChart(){
+  if(!currentMetric)return;
+  const labels=rows.map(r=>fmtDateDisplay(r.Data));
+  const values=rows.map(r=>cleanNumber(r[currentMetric]));
+  if(chartInstance)chartInstance.destroy();
+  chartInstance=new Chart(ctx,{type:'line',data:{labels, datasets:[{label:currentMetric,data:values,borderWidth:2,pointRadius:3}]}, options:{responsive:true, maintainAspectRatio:false}});
+}
+
+loadData();
+</script>
+</body>
+</html>
